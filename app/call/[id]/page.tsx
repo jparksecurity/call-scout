@@ -27,7 +27,7 @@ export async function generateMetadata({ params }: CallPageProps): Promise<Metad
 
   return {
     title: `${earningCall.company} ${earningCall.quarter} ${earningCall.year} - CallScout`,
-    description: earningCall.description || `${earningCall.company} earnings call analysis with AI-powered insights`,
+    description: `${earningCall.company} earnings call analysis with AI-powered insights`,
   };
 }
 
