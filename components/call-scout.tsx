@@ -1,14 +1,13 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Play, Pause, Volume2, VolumeX, MessageSquare, Clock, TrendingUp } from "lucide-react";
+import { MessageSquare, Clock, TrendingUp } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import Hls from "hls.js";
 
 interface Annotation {
   id: string;
@@ -27,15 +26,14 @@ interface TranscriptSegment {
 }
 
 const CallScoutComponent = () => {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration] = useState(3600); // 1 hour default
-  const [volume, setVolume] = useState(0.8);
-  const [isMuted, setIsMuted] = useState(false);
-  const [activeAnnotation, setActiveAnnotation] = useState<string | null>(null);
-  const [highlightedSegment, setHighlightedSegment] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   
-  const transcriptRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+
+  // Hardcoded HLS stream URL
+  const audioUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
 
   const annotations: Annotation[] = [
     {
@@ -123,87 +121,92 @@ const CallScoutComponent = () => {
     }
   ], []);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
 
-  const timeToSeconds = (timeStr: string) => {
-    const [mins, secs] = timeStr.split(":").map(Number);
-    return mins * 60 + secs;
-  };
-
-  const togglePlay = () => {
-    setIsPlaying(!isPlaying);
-  };
-
-  const toggleMute = () => {
-    setIsMuted(!isMuted);
-  };
-
-  const handleVolumeChange = (value: number) => {
-    setVolume(value / 100);
-    setIsMuted(value === 0);
-  };
-
-  const handleSeek = (value: number) => {
-    const newTime = (value / 100) * duration;
-    setCurrentTime(newTime);
-  };
-
-  const getAnnotationForTime = (timeStr: string) => {
-    const timeInSeconds = timeToSeconds(timeStr);
-    return annotations.find(ann => {
-      const startSeconds = timeToSeconds(ann.startTime);
-      const endSeconds = timeToSeconds(ann.endTime);
-      return timeInSeconds >= startSeconds && timeInSeconds <= endSeconds;
-    });
-  };
-
-  const getAnnotationTypeColor = (type: string) => {
-    switch (type) {
-      case "financial": return "bg-green-500/20 text-green-700 border-green-500/30 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700/50";
-      case "strategic": return "bg-blue-500/20 text-blue-700 border-blue-500/30 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700/50";
-      default: return "bg-gray-500/20 text-gray-700 border-gray-500/30 dark:bg-gray-800/30 dark:text-gray-300 dark:border-gray-600/50";
-    }
-  };
-
-  const getAnnotationIcon = (type: string) => {
-    switch (type) {
-      case "financial": return <TrendingUp className="w-3 h-3" />;
-      case "strategic": return <MessageSquare className="w-3 h-3" />;
-      default: return <Clock className="w-3 h-3" />;
-    }
-  };
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying) {
-      interval = setInterval(() => {
-        setCurrentTime(prev => {
-          if (prev >= duration) {
-            setIsPlaying(false);
-            return duration;
-          }
-          return prev + 1;
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const initializeAudio = () => {
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90
         });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying, duration]);
+        hlsRef.current = hls;
+        
+        hls.loadSource(audioUrl);
+        hls.attachMedia(audio);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setIsLoading(false);
+          console.log("HLS manifest loaded successfully");
+        });
+        
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          console.error("HLS error:", data);
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                setError("Network error loading audio stream");
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                setError("Media error - trying to recover");
+                hls.recoverMediaError();
+                break;
+              default:
+                setError(`Fatal error: ${data.type}`);
+                setIsLoading(false);
+                break;
+            }
+          } else {
+            console.warn("Non-fatal HLS error:", data);
+          }
+        });
 
-  useEffect(() => {
-    const currentTimeStr = formatTime(currentTime);
-    const segment = transcriptSegments.find(seg => seg.timestamp === currentTimeStr);
-    if (segment) {
-      setHighlightedSegment(segment.id);
-      if (transcriptRef.current) {
-        const element = transcriptRef.current.querySelector(`[data-segment-id="${segment.id}"]`);
-        element?.scrollIntoView({ behavior: "smooth", block: "center" });
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          console.log("HLS media attached");
+        });
+      } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+        // Fallback for Safari
+        audio.src = audioUrl;
+        audio.crossOrigin = "anonymous";
+        setIsLoading(false);
+      } else {
+        setError("HLS is not supported in this browser");
+        setIsLoading(false);
       }
-    }
-  }, [currentTime, transcriptSegments]);
+
+      // Audio event listeners
+      const handleLoadedMetadata = () => {
+        setIsLoading(false);
+      };
+
+      const handleError = () => {
+        setError("Failed to load audio");
+        setIsLoading(false);
+      };
+
+      audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.addEventListener('error', handleError);
+
+      return () => {
+        audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        audio.removeEventListener('error', handleError);
+      };
+    };
+
+    const cleanup = initializeAudio();
+
+    return () => {
+      cleanup?.();
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+      }
+    };
+  }, [audioUrl]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -232,71 +235,35 @@ const CallScoutComponent = () => {
             <Card className="p-6 sticky top-6">
               <div className="space-y-4">
                 <div className="text-center">
-                  <h3 className="font-semibold text-lg">Tesla Q4 2023 Earnings Call</h3>
-                  <p className="text-sm text-muted-foreground">January 24, 2024</p>
+                  <h3 className="font-semibold text-lg">Tesla Q1 2025 Earnings Call</h3>
+                  <p className="text-sm text-muted-foreground">April 22, 2025</p>
+                  
+                  {/* Loading/Error States */}
+                  {isLoading && (
+                    <div className="flex items-center justify-center space-x-2 mt-2">
+                      <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                      <span className="text-xs text-muted-foreground">Loading audio...</span>
+                    </div>
+                  )}
+                  
+                  {error && (
+                    <div className="mt-2 p-2 bg-destructive/10 text-destructive text-xs rounded-md">
+                      {error}
+                    </div>
+                  )}
                 </div>
 
-                {/* Progress Bar */}
-                <div className="space-y-2">
-                  <div 
-                    className="w-full h-2 bg-muted rounded-full cursor-pointer relative overflow-hidden"
-                    onClick={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const x = e.clientX - rect.left;
-                      const percentage = (x / rect.width) * 100;
-                      handleSeek(percentage);
-                    }}
+                {/* Native Audio Player */}
+                <div className="flex justify-center">
+                  <audio
+                    ref={audioRef}
+                    controls
+                    preload="metadata"
+                    className="w-full"
+                    style={{ maxWidth: '100%' }}
                   >
-                    <motion.div
-                      className="h-full bg-primary rounded-full"
-                      style={{ width: `${(currentTime / duration) * 100}%` }}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${(currentTime / duration) * 100}%` }}
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(duration)}</span>
-                  </div>
-                </div>
-
-                {/* Controls */}
-                <div className="flex items-center justify-center space-x-4">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={togglePlay}
-                    className="w-12 h-12"
-                  >
-                    {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
-                  </Button>
-                </div>
-
-                {/* Volume Control */}
-                <div className="flex items-center space-x-2">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={toggleMute}
-                    className="w-8 h-8"
-                  >
-                    {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  </Button>
-                  <div 
-                    className="flex-1 h-1 bg-muted rounded-full cursor-pointer"
-                    onClick={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const x = e.clientX - rect.left;
-                      const percentage = (x / rect.width) * 100;
-                      handleVolumeChange(percentage);
-                    }}
-                  >
-                    <div 
-                      className="h-full bg-primary rounded-full"
-                      style={{ width: `${isMuted ? 0 : volume * 100}%` }}
-                    />
-                  </div>
+                    Your browser does not support the audio element.
+                  </audio>
                 </div>
 
                 {/* Annotations Summary */}
@@ -304,50 +271,37 @@ const CallScoutComponent = () => {
                   <h4 className="font-medium text-sm">Key Annotations</h4>
                   <div className="space-y-2">
                     {annotations.map((annotation) => (
-                      <Popover key={annotation.id}>
-                        <PopoverTrigger asChild>
-                          <button
-                            className={cn(
-                              "w-full text-left p-3 rounded-lg border transition-all duration-200 hover:scale-[1.02]",
-                              getAnnotationTypeColor(annotation.type),
-                              activeAnnotation === annotation.id && "ring-2 ring-primary"
+                      <div
+                        key={annotation.id}
+                        className={cn(
+                          "w-full text-left p-3 rounded-lg border",
+                          annotation.type === "financial" 
+                            ? "bg-green-500/20 text-green-700 border-green-500/30" 
+                            : annotation.type === "strategic"
+                            ? "bg-blue-500/20 text-blue-700 border-blue-500/30"
+                            : "bg-gray-500/20 text-gray-700 border-gray-500/30"
+                        )}
+                      >
+                        <div className="flex items-start space-x-2">
+                          <div className="flex-shrink-0 mt-1">
+                            {annotation.type === "financial" ? (
+                              <TrendingUp className="w-3 h-3" />
+                            ) : annotation.type === "strategic" ? (
+                              <MessageSquare className="w-3 h-3" />
+                            ) : (
+                              <Clock className="w-3 h-3" />
                             )}
-                            onClick={() => {
-                              const startSeconds = timeToSeconds(annotation.startTime);
-                              setCurrentTime(startSeconds);
-                              setActiveAnnotation(annotation.id);
-                            }}
-                          >
-                            <div className="flex items-start space-x-2">
-                              {getAnnotationIcon(annotation.type)}
-                              <div className="flex-1 min-w-0">
-                                <div className="text-xs font-medium mb-1">
-                                  {annotation.startTime} - {annotation.endTime}
-                                </div>
-                                <div className="text-xs line-clamp-2">
-                                  {annotation.text}
-                                </div>
-                              </div>
-                            </div>
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-80" side="right">
-                          <div className="space-y-2">
-                            <div className="flex items-center space-x-2">
-                              {getAnnotationIcon(annotation.type)}
-                              <Badge variant="outline" className={getAnnotationTypeColor(annotation.type)}>
-                                {annotation.type}
-                              </Badge>
-                            </div>
-                            <div className="text-sm font-medium">
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium mb-1">
                               {annotation.startTime} - {annotation.endTime}
                             </div>
-                            <p className="text-sm text-muted-foreground">
+                            <div className="text-xs">
                               {annotation.text}
-                            </p>
+                            </div>
                           </div>
-                        </PopoverContent>
-                      </Popover>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -367,79 +321,41 @@ const CallScoutComponent = () => {
                 </div>
 
                 <ScrollArea className="space-y-4 h-[600px] pr-2">
-                  <div 
-                    ref={transcriptRef}
-                    className="space-y-4"
-                  >
+                  <div className="space-y-4">
                     <AnimatePresence>
-                      {transcriptSegments.map((segment) => {
-                        const annotation = getAnnotationForTime(segment.timestamp);
-                        const isHighlighted = highlightedSegment === segment.id;
-                        
-                        return (
-                          <motion.div
-                            key={segment.id}
-                            data-segment-id={segment.id}
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className={cn(
-                              "p-4 rounded-lg border transition-all duration-300",
-                              isHighlighted 
-                                ? "bg-primary/10 border-primary shadow-lg" 
-                                : "bg-muted/50 border-border hover:bg-muted/80",
-                              segment.hasAnnotation && "border-l-4 border-l-primary"
-                            )}
-                          >
-                            <div className="flex items-start space-x-3">
-                              <div className="flex-shrink-0">
-                                <Badge 
-                                  variant="outline" 
-                                  className={cn(
-                                    "text-xs",
-                                    isHighlighted && "bg-primary text-primary-foreground"
-                                  )}
-                                >
-                                  {segment.timestamp}
-                                </Badge>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center space-x-2 mb-2">
-                                  <span className="font-medium text-sm">
-                                    {segment.speaker}
-                                  </span>
-                                  {segment.hasAnnotation && (
-                                    <MessageSquare className="w-3 h-3 text-primary" />
-                                  )}
-                                </div>
-                                <p className="text-sm leading-relaxed">
-                                  {segment.text}
-                                </p>
-                                
-                                {annotation && (
-                                  <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: "auto" }}
-                                    className="mt-3 p-3 rounded-md border-l-2 border-l-primary bg-primary/5"
-                                  >
-                                    <div className="flex items-center space-x-2 mb-1">
-                                      {getAnnotationIcon(annotation.type)}
-                                      <Badge 
-                                        variant="outline" 
-                                        className={getAnnotationTypeColor(annotation.type)}
-                                      >
-                                        {annotation.type} insight
-                                      </Badge>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                      {annotation.text}
-                                    </p>
-                                  </motion.div>
+                      {transcriptSegments.map((segment) => (
+                        <motion.div
+                          key={segment.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className={cn(
+                            "p-4 rounded-lg border transition-all duration-300",
+                            "bg-muted/50 border-border hover:bg-muted/80",
+                            segment.hasAnnotation && "border-l-4 border-l-primary"
+                          )}
+                        >
+                          <div className="flex items-start space-x-3">
+                            <div className="flex-shrink-0">
+                              <Badge variant="outline" className="text-xs">
+                                {segment.timestamp}
+                              </Badge>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <span className="font-medium text-sm">
+                                  {segment.speaker}
+                                </span>
+                                {segment.hasAnnotation && (
+                                  <MessageSquare className="w-3 h-3 text-primary" />
                                 )}
                               </div>
+                              <p className="text-sm leading-relaxed">
+                                {segment.text}
+                              </p>
                             </div>
-                          </motion.div>
-                        );
-                      })}
+                          </div>
+                        </motion.div>
+                      ))}
                     </AnimatePresence>
                   </div>
                 </ScrollArea>
