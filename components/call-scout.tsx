@@ -1,21 +1,28 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageSquare, ArrowDown } from "lucide-react";
+import { MessageSquare, ArrowDown, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { 
   TranscriptWord, 
   TranscriptSegment, 
-  HlsErrorData 
+  HlsErrorData,
+  EarningCall
 } from "@/lib/types";
 import Hls from "hls.js";
 
-const CallScoutComponent = () => {
+interface CallScoutComponentProps {
+  earningCall: EarningCall;
+}
+
+const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) => {
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transcriptSegments, setTranscriptSegments] = useState<
@@ -36,11 +43,9 @@ const CallScoutComponent = () => {
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastScrollPositionRef = useRef(0);
 
-  // URLs
-  const audioUrl =
-    "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
-  const transcriptUrl =
-    "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/live_transcript.jsonl";
+  // URLs from earning call data
+  const audioUrl = earningCall.audioUrl;
+  const transcriptUrl = earningCall.transcriptUrl;
 
   // Helper function to convert seconds to MM:SS or HH:MM:SS format
   const formatSecondsToTimestamp = (seconds: number): string => {
@@ -225,6 +230,11 @@ const CallScoutComponent = () => {
   // Fetch transcript data
   const fetchTranscript = useCallback(async () => {
     try {
+      if (!transcriptUrl) {
+        setError("Transcript URL is missing");
+        return;
+      }
+
       const response = await fetch(transcriptUrl, {
         cache: "no-cache",
       });
@@ -415,7 +425,7 @@ const CallScoutComponent = () => {
         });
         hlsRef.current = hls;
 
-        hls.loadSource(audioUrl);
+        hls.loadSource(audioUrl || "");
         hls.attachMedia(audio);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -442,7 +452,7 @@ const CallScoutComponent = () => {
         });
       } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
         // Fallback for Safari
-        audio.src = audioUrl;
+        audio.src = audioUrl || "";
         audio.crossOrigin = "anonymous";
         setIsLoading(false);
       } else {
@@ -491,19 +501,36 @@ const CallScoutComponent = () => {
       <div className="border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">CallScout</h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Live Earnings Call Insight — Real-time annotated transcript
-                analysis
-              </p>
+            <div className="flex items-center space-x-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push('/')}
+                className="flex items-center space-x-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back to Calls</span>
+              </Button>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">CallScout</h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Live Earnings Call Insight — Real-time annotated transcript
+                  analysis
+                </p>
+              </div>
             </div>
             <Badge
               variant="outline"
-              className="bg-green-500/10 text-green-400 border-green-500/30"
+              className={cn(
+                earningCall.status === "live" 
+                  ? "bg-green-500/10 text-green-400 border-green-500/30"
+                  : "bg-blue-500/10 text-blue-400 border-blue-500/30"
+              )}
             >
-              <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
-              Live
+              {earningCall.status === "live" && (
+                <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
+              )}
+              {earningCall.status === "live" ? "Live" : "Recording"}
             </Badge>
           </div>
         </div>
@@ -517,10 +544,10 @@ const CallScoutComponent = () => {
               <div className="space-y-4">
                 <div className="text-center">
                   <h3 className="font-semibold text-lg">
-                    Tesla Q1 2025 Earnings Call
+                    {earningCall.company} {earningCall.quarter} {earningCall.year} Earnings Call
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    April 22, 2025
+                    {earningCall.date}
                   </p>
 
                   {/* Loading/Error States */}

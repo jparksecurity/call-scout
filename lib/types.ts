@@ -48,4 +48,15 @@ export interface APIResponse {
 export interface OpenAIResponse {
   insight?: string;
   hasInsight: boolean;
+}
+
+export interface EarningCall {
+  id: string;
+  company: string;
+  quarter: string;
+  year: number;
+  date: string;
+  audioUrl?: string;
+  transcriptUrl?: string;
+  status: "live" | "completed" | "upcoming";
 } 

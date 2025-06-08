@@ -1,11 +1,11 @@
 import { Metadata } from "next";
-import CallScoutComponent from "@/components/call-scout";
+import EarningCallsLanding from "@/components/earning-calls-landing";
 
 export const metadata: Metadata = {
-  title: "CallScout - Live Earnings Call Insight",
-  description: "Real-time insight transcript analysis for earnings calls with AI-powered insights",
+  title: "CallScout - AI-Powered Earnings Call Analysis",
+  description: "Real-time insight transcript analysis for earnings calls with AI-powered insights and annotations",
 };
 
 export default function Home() {
-  return <CallScoutComponent />;
+  return <EarningCallsLanding />;
 }
