@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,20 +20,27 @@ interface Annotation {
 interface TranscriptSegment {
   id: string;
   timestamp: string;
-  speaker: string;
   text: string;
   hasAnnotation?: boolean;
+}
+
+interface HlsErrorData {
+  fatal?: boolean;
+  type?: string;
 }
 
 const CallScoutComponent = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const currentParagraphRef = useRef<{ id: string | null; text: string; timestamp?: string }>({ id: null, text: '' });
 
-  // Hardcoded HLS stream URL
+  // URLs
   const audioUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
+  const transcriptUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/live_transcript.jsonl";
 
   const annotations: Annotation[] = [
     {
@@ -66,62 +73,106 @@ const CallScoutComponent = () => {
     }
   ];
 
-  const transcriptSegments: TranscriptSegment[] = useMemo(() => [
-    {
-      id: "seg1",
-      timestamp: "07:58",
-      speaker: "Elon Musk",
-      text: "Thank you for joining us today. I want to start by addressing some of the regulatory environment we're operating in. The government's role in shaping the future of sustainable transport cannot be understated, though I recognize this isn't directly tied to our quarterly numbers.",
-      hasAnnotation: true
-    },
-    {
-      id: "seg2", 
-      timestamp: "08:25",
-      speaker: "Elon Musk",
-      text: "Moving to our core business metrics, Q4 has shown remarkable resilience despite global supply chain challenges. Our production numbers exceeded expectations across all vehicle lines."
-    },
-    {
-      id: "seg3",
-      timestamp: "09:15",
-      speaker: "CFO Zachary Kirkhorn", 
-      text: "From a financial perspective, we've maintained healthy margins while scaling production. Our energy business continues to be a significant growth driver."
-    },
-    {
-      id: "seg4",
-      timestamp: "11:29",
-      speaker: "Elon Musk",
-      text: "Looking ahead, I'll be dedicating more of my time to Tesla operations starting next month. This increased focus will accelerate our autonomous driving timeline and manufacturing efficiency.",
-      hasAnnotation: true
-    },
-    {
-      id: "seg5",
-      timestamp: "12:00",
-      speaker: "Elon Musk", 
-      text: "I want to be transparent about 2025 - we expect some volatility in the first half, but our long-term trajectory remains exceptionally strong. The fundamentals of our business have never been more solid. We're not just building cars; we're architecting the future of transportation and energy.",
-      hasAnnotation: true
-    },
-    {
-      id: "seg6",
-      timestamp: "12:30",
-      speaker: "Elon Musk",
-      text: "Our investment in autonomy and humanoid robotics represents a paradigm shift for Tesla. These aren't side projects - they're core to our identity as a technology company. The potential market size here is orders of magnitude larger than automotive.",
-      hasAnnotation: true
-    },
-    {
-      id: "seg7",
-      timestamp: "15:30",
-      speaker: "Analyst",
-      text: "Can you provide more specifics on the timeline for full self-driving deployment?"
-    },
-    {
-      id: "seg8", 
-      timestamp: "15:45",
-      speaker: "Elon Musk",
-      text: "We're making significant progress on FSD. The neural network improvements we've implemented show remarkable advancement in edge case handling. I'm optimistic about broader deployment in 2024."
+  // Helper function to convert seconds to MM:SS or HH:MM:SS format
+  const formatSecondsToTimestamp = (seconds: number): string => {
+    const totalSeconds = Math.floor(seconds);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const remainingSeconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+    } else {
+      return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
-  ], []);
+  };
 
+  // Process transcript data
+  const processTranscript = useCallback((transcriptText: string) => {
+    // Split by newlines and skip first metadata line
+    const lines = transcriptText.split('\n').slice(1);
+    
+    lines.forEach((line) => {
+      try {
+        if (!line.trim()) return; // Skip empty lines
+        
+        const json = JSON.parse(line);
+        
+        // Skip non-entry messages
+        if (json.type && json.type !== 'entry') {
+          return;
+        }
 
+        // Process messages that have transcript data
+        if (json.p !== undefined && json.t !== undefined) {
+          // Start a new paragraph if 'p' changes
+          if (json.p !== currentParagraphRef.current.id) {
+            // Save the previous paragraph if it has content
+            if (currentParagraphRef.current.id && currentParagraphRef.current.text.trim()) {
+              const newSegment: TranscriptSegment = {
+                id: `seg_${currentParagraphRef.current.id}`,
+                timestamp: currentParagraphRef.current.timestamp || '00:00',
+                text: currentParagraphRef.current.text.trim(),
+                hasAnnotation: false
+              };
+              
+              setTranscriptSegments(prev => [...prev, newSegment]);
+            }
+            
+            // Start new paragraph with the first word's timestamp
+            const timestampFormatted = formatSecondsToTimestamp(json.s || 0);
+            currentParagraphRef.current = { 
+              id: json.p, 
+              text: json.t + ' ',
+              timestamp: timestampFormatted
+            };
+          } else {
+            // Append to current paragraph
+            currentParagraphRef.current.text += json.t + ' ';
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing JSON line:', e);
+      }
+    });
+
+    // Save the final paragraph if it exists
+    if (currentParagraphRef.current.id && currentParagraphRef.current.text.trim()) {
+      const finalSegment: TranscriptSegment = {
+        id: `seg_${currentParagraphRef.current.id}`,
+        timestamp: currentParagraphRef.current.timestamp || '00:00',
+        text: currentParagraphRef.current.text.trim(),
+        hasAnnotation: false
+      };
+      
+      setTranscriptSegments(prev => [...prev, finalSegment]);
+    }
+  }, []);
+
+  // Fetch transcript data
+  const fetchTranscript = useCallback(async () => {
+    try {
+      const response = await fetch(transcriptUrl, {
+        cache: 'no-cache'
+      });
+
+      if (response.ok) {
+        const transcriptText = await response.text();
+        processTranscript(transcriptText);
+      } else {
+        console.error('Failed to fetch transcript:', response.statusText);
+        setError(`Failed to fetch transcript: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error fetching transcript:', error);
+      setError(`Error fetching transcript: ${error}`);
+    }
+  }, [transcriptUrl, processTranscript]);
+
+  // Fetch transcript once
+  useEffect(() => {
+    fetchTranscript();
+  }, [fetchTranscript]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -144,7 +195,7 @@ const CallScoutComponent = () => {
           console.log("HLS manifest loaded successfully");
         });
         
-        hls.on(Hls.Events.ERROR, (_event, data) => {
+        hls.on(Hls.Events.ERROR, (_event: string, data: HlsErrorData) => {
           console.error("HLS error:", data);
           if (data.fatal) {
             switch (data.type) {
@@ -342,9 +393,6 @@ const CallScoutComponent = () => {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center space-x-2 mb-2">
-                                <span className="font-medium text-sm">
-                                  {segment.speaker}
-                                </span>
                                 {segment.hasAnnotation && (
                                   <MessageSquare className="w-3 h-3 text-primary" />
                                 )}
