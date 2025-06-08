@@ -17,10 +17,19 @@ interface Annotation {
   type: "financial" | "strategic" | "general";
 }
 
+interface TranscriptWord {
+  id: string;
+  startTime: number; // in seconds
+  endTime: number; // in seconds
+  text: string;
+  paragraphId: string;
+  speakerId: string;
+}
+
 interface TranscriptSegment {
   id: string;
   timestamp: string;
-  text: string;
+  words: TranscriptWord[];
   hasAnnotation?: boolean;
 }
 
@@ -33,10 +42,12 @@ const CallScoutComponent = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
+  const [currentAudioTime, setCurrentAudioTime] = useState(0);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const currentParagraphRef = useRef<{ id: string | null; text: string; timestamp?: string }>({ id: null, text: '' });
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const lastWordCountRef = useRef(0);
 
   // URLs
   const audioUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
@@ -87,66 +98,73 @@ const CallScoutComponent = () => {
     }
   };
 
+  // Helper function to convert timestamp string to seconds
+  const convertTimestampToSeconds = (timestamp: string): number => {
+    const parts = timestamp.split(':').map(Number);
+    if (parts.length === 3) {
+      // HH:MM:SS format
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+      // MM:SS format
+      return parts[0] * 60 + parts[1];
+    }
+    return 0;
+  };
+
   // Process transcript data
   const processTranscript = useCallback((transcriptText: string) => {
     // Split by newlines and skip first metadata line
     const lines = transcriptText.split('\n').slice(1);
+    const segmentsMap = new Map<string, TranscriptSegment>();
     
-    lines.forEach((line) => {
+    lines.forEach((line, index) => {
       try {
         if (!line.trim()) return; // Skip empty lines
         
         const json = JSON.parse(line);
         
-        // Skip non-entry messages
-        if (json.type && json.type !== 'entry') {
+        // Skip non-word entries
+        if (json.type || json.s === undefined || json.t === undefined || json.p === undefined) {
           return;
         }
 
-        // Process messages that have transcript data
-        if (json.p !== undefined && json.t !== undefined) {
-          // Start a new paragraph if 'p' changes
-          if (json.p !== currentParagraphRef.current.id) {
-            // Save the previous paragraph if it has content
-            if (currentParagraphRef.current.id && currentParagraphRef.current.text.trim()) {
-              const newSegment: TranscriptSegment = {
-                id: `seg_${currentParagraphRef.current.id}`,
-                timestamp: currentParagraphRef.current.timestamp || '00:00',
-                text: currentParagraphRef.current.text.trim(),
-                hasAnnotation: false
-              };
-              
-              setTranscriptSegments(prev => [...prev, newSegment]);
-            }
-            
-            // Start new paragraph with the first word's timestamp
-            const timestampFormatted = formatSecondsToTimestamp(json.s || 0);
-            currentParagraphRef.current = { 
-              id: json.p, 
-              text: json.t + ' ',
-              timestamp: timestampFormatted
-            };
-          } else {
-            // Append to current paragraph
-            currentParagraphRef.current.text += json.t + ' ';
-          }
+        // Process individual words
+        const word: TranscriptWord = {
+          id: `word_${index}`,
+          startTime: json.s,
+          endTime: json.e || json.s + 0.5,
+          text: json.t,
+          paragraphId: json.p,
+          speakerId: json.S || '0'
+        };
+
+        const segmentId = `seg_${json.p}`;
+        
+        if (!segmentsMap.has(segmentId)) {
+          // Create new segment
+          const newSegment: TranscriptSegment = {
+            id: segmentId,
+            timestamp: formatSecondsToTimestamp(json.s),
+            words: [word],
+            hasAnnotation: false
+          };
+          segmentsMap.set(segmentId, newSegment);
+        } else {
+          // Add word to existing segment
+          const existingSegment = segmentsMap.get(segmentId)!;
+          existingSegment.words.push(word);
         }
       } catch (e) {
         console.error('Error parsing JSON line:', e);
       }
     });
 
-    // Save the final paragraph if it exists
-    if (currentParagraphRef.current.id && currentParagraphRef.current.text.trim()) {
-      const finalSegment: TranscriptSegment = {
-        id: `seg_${currentParagraphRef.current.id}`,
-        timestamp: currentParagraphRef.current.timestamp || '00:00',
-        text: currentParagraphRef.current.text.trim(),
-        hasAnnotation: false
-      };
-      
-      setTranscriptSegments(prev => [...prev, finalSegment]);
-    }
+    // Convert map to array and sort by timestamp
+    const segments = Array.from(segmentsMap.values()).sort((a, b) => {
+      return convertTimestampToSeconds(a.timestamp) - convertTimestampToSeconds(b.timestamp);
+    });
+
+    setTranscriptSegments(segments);
   }, []);
 
   // Fetch transcript data
@@ -173,6 +191,25 @@ const CallScoutComponent = () => {
   useEffect(() => {
     fetchTranscript();
   }, [fetchTranscript]);
+
+  // Auto-scroll when new words appear
+  useEffect(() => {
+    const currentWordCount = transcriptSegments.reduce((count, segment) => 
+      count + segment.words.filter(word => word.startTime <= currentAudioTime).length, 0
+    );
+
+    // Only scroll if new words have appeared
+    if (currentWordCount > lastWordCountRef.current && scrollAreaRef.current) {
+      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollContainer) {
+        scrollContainer.scrollTo({
+          top: scrollContainer.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+      lastWordCountRef.current = currentWordCount;
+    }
+  }, [transcriptSegments, currentAudioTime]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -240,12 +277,18 @@ const CallScoutComponent = () => {
         setIsLoading(false);
       };
 
+      const handleTimeUpdate = () => {
+        setCurrentAudioTime(audio.currentTime);
+      };
+
       audio.addEventListener('loadedmetadata', handleLoadedMetadata);
       audio.addEventListener('error', handleError);
+      audio.addEventListener('timeupdate', handleTimeUpdate);
 
       return () => {
         audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
         audio.removeEventListener('error', handleError);
+        audio.removeEventListener('timeupdate', handleTimeUpdate);
       };
     };
 
@@ -364,46 +407,91 @@ const CallScoutComponent = () => {
           <div className="lg:col-span-2">
             <Card className="p-6">
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-lg">Live Transcript</h3>
-                  <Badge variant="outline">
-                    {transcriptSegments.length} segments
-                  </Badge>
-                </div>
+                                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-lg">Live Transcript</h3>
+                    <Badge variant="outline" className="text-xs">
+                      {formatSecondsToTimestamp(currentAudioTime)}
+                    </Badge>
+                  </div>
 
-                <ScrollArea className="space-y-4 h-[600px] pr-2">
+                <ScrollArea ref={scrollAreaRef} className="space-y-4 h-[600px] pr-2">
                   <div className="space-y-4">
                     <AnimatePresence>
-                      {transcriptSegments.map((segment) => (
-                        <motion.div
-                          key={segment.id}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className={cn(
-                            "p-4 rounded-lg border transition-all duration-300",
-                            "bg-muted/50 border-border hover:bg-muted/80",
-                            segment.hasAnnotation && "border-l-4 border-l-primary"
-                          )}
-                        >
-                          <div className="flex items-start space-x-3">
-                            <div className="flex-shrink-0">
-                              <Badge variant="outline" className="text-xs">
-                                {segment.timestamp}
-                              </Badge>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center space-x-2 mb-2">
-                                {segment.hasAnnotation && (
-                                  <MessageSquare className="w-3 h-3 text-primary" />
-                                )}
+                      {transcriptSegments
+                        .filter(segment => segment.words.some(word => word.startTime <= currentAudioTime))
+                        .map((segment, index, filteredSegments) => {
+                          // Find the last visible word in this segment
+                          const visibleWords = segment.words.filter(word => word.startTime <= currentAudioTime);
+                          const lastVisibleWord = visibleWords[visibleWords.length - 1];
+                          const isCurrentSegment = lastVisibleWord && 
+                            currentAudioTime >= lastVisibleWord.startTime && 
+                            currentAudioTime <= lastVisibleWord.endTime + 2; // 2 second buffer
+                          
+                          return (
+                            <motion.div
+                              key={segment.id}
+                              initial={{ opacity: 0, y: 20 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className={cn(
+                                "p-4 rounded-lg border transition-all duration-300",
+                                isCurrentSegment 
+                                  ? "bg-primary/10 border-primary/30 shadow-md" 
+                                  : "bg-muted/50 border-border hover:bg-muted/80",
+                                segment.hasAnnotation && "border-l-4 border-l-primary"
+                              )}
+                            >
+                              <div className="flex items-start space-x-3">
+                                <div className="flex-shrink-0">
+                                  <Badge 
+                                    variant={isCurrentSegment ? "default" : "outline"} 
+                                    className={cn(
+                                      "text-xs",
+                                      isCurrentSegment && "bg-primary text-primary-foreground"
+                                    )}
+                                  >
+                                    {segment.timestamp}
+                                  </Badge>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center space-x-2 mb-2">
+                                    {isCurrentSegment && (
+                                      <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                                    )}
+                                    {segment.hasAnnotation && (
+                                      <MessageSquare className="w-3 h-3 text-primary" />
+                                    )}
+                                  </div>
+                                  <p className={cn(
+                                    "text-sm leading-relaxed",
+                                    isCurrentSegment && "font-medium"
+                                  )}>
+                                    {segment.words
+                                      .filter(word => word.startTime <= currentAudioTime)
+                                      .map(word => {
+                                        const isCurrentWord = currentAudioTime >= word.startTime && 
+                                                            currentAudioTime <= word.endTime;
+                                        
+                                        return (
+                                          <motion.span
+                                            key={word.id}
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            transition={{ duration: 0.15, ease: "easeOut" }}
+                                            className={cn(
+                                              "inline-block px-1 rounded transition-colors duration-150",
+                                              isCurrentWord && "font-medium bg-primary/15"
+                                            )}
+                                          >
+                                            {word.text}{' '}
+                                          </motion.span>
+                                        );
+                                      })}
+                                  </p>
+                                </div>
                               </div>
-                              <p className="text-sm leading-relaxed">
-                                {segment.text}
-                              </p>
-                            </div>
-                          </div>
-                        </motion.div>
-                      ))}
+                            </motion.div>
+                          );
+                        })}
                     </AnimatePresence>
                   </div>
                 </ScrollArea>
