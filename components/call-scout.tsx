@@ -512,10 +512,53 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
   }, [audioUrl]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
-      <div className="border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-6 py-4">
+    <div className="min-h-screen bg-gray-50">
+      {/* Navigation Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center space-x-8">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">C</span>
+                </div>
+                <span className="text-xl font-bold text-gray-900">CallScout</span>
+              </div>
+              <nav className="hidden md:flex space-x-8">
+                <button 
+                  onClick={() => router.push("/")}
+                  className="text-gray-500 hover:text-gray-900 px-3 py-2 text-sm font-medium transition-colors"
+                >
+                  Live Calls
+                </button>
+                <button 
+                  onClick={() => router.push("/")}
+                  className="text-gray-500 hover:text-gray-900 px-3 py-2 text-sm font-medium transition-colors"
+                >
+                  Upcoming
+                </button>
+                <button 
+                  onClick={() => router.push("/")}
+                  className="text-gray-500 hover:text-gray-900 px-3 py-2 text-sm font-medium transition-colors"
+                >
+                  Recordings
+                </button>
+                <button 
+                  onClick={() => router.push("/")}
+                  className="text-gray-500 hover:text-gray-900 px-3 py-2 text-sm font-medium transition-colors"
+                >
+                  About
+                </button>
+              </nav>
+            </div>
+
+          </div>
+        </div>
+      </header>
+
+      {/* Call Header */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <Button
@@ -528,35 +571,40 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
                 <span>Back to Calls</span>
               </Button>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">CallScout</h1>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Live Earnings Call Insight — Real-time annotated transcript
-                  analysis
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {earningCall.company}
+                </h1>
+                <p className="text-gray-600 mt-1">
+                  {earningCall.quarter} {earningCall.year} Earnings Call • {earningCall.date}
                 </p>
               </div>
             </div>
-            <Badge
-              variant="outline"
-              className={cn(
-                earningCall.status === "live" 
-                  ? "bg-green-500/10 text-green-400 border-green-500/30"
-                  : "bg-blue-500/10 text-blue-400 border-blue-500/30"
-              )}
-            >
+            <div className="flex items-center space-x-3">
               {earningCall.status === "live" && (
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
+                <Badge className="bg-green-500/10 text-green-500 border-green-500/20 px-3 py-1">
+                  🔴 LIVE
+                </Badge>
               )}
-              {earningCall.status === "live" ? "Live" : "Recording"}
-            </Badge>
+              {earningCall.status === "completed" && (
+                <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20 px-3 py-1">
+                  📊 RECORDED
+                </Badge>
+              )}
+              {earningCall.status === "upcoming" && (
+                <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 px-3 py-1">
+                  ⏰ UPCOMING
+                </Badge>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="container mx-auto px-6 py-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Audio Player Section */}
           <div className="lg:col-span-1">
-            <Card className="p-6 sticky top-6">
+            <Card className="p-6 sticky top-6 bg-white border-gray-200 shadow-sm">
               <div className="space-y-4">
                 <div className="text-center">
                   <h3 className="font-semibold text-lg">
@@ -655,7 +703,7 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
 
           {/* Transcript Section */}
           <div className="lg:col-span-2">
-            <Card className="p-6 relative">
+            <Card className="p-6 relative bg-white border-gray-200 shadow-sm">
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-lg">Live Transcript</h3>

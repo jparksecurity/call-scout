@@ -53,10 +53,16 @@ export interface OpenAIResponse {
 export interface EarningCall {
   id: string;
   company: string;
+  ticker?: string;
   quarter: string;
   year: number;
   date: string;
   audioUrl?: string;
   transcriptUrl?: string;
   status: "live" | "completed" | "upcoming";
+  viewers?: number;
+  duration?: string;
+  sentiment?: "Positive" | "Negative" | "Neutral" | "Mixed";
+  aiInsights?: number;
+  hasReminder?: boolean;
 } 
