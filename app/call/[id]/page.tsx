@@ -3,10 +3,12 @@ import { notFound } from "next/navigation";
 import CallScoutComponent from "@/components/call-scout";
 import { getEarningCallById, EARNING_CALLS } from "@/lib/data/earning-calls";
 
+type Params = {
+  id: string;
+};
+
 interface CallPageProps {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<Params>;
 }
 
 export function generateStaticParams() {
@@ -15,7 +17,9 @@ export function generateStaticParams() {
   }));
 }
 
-export async function generateMetadata({ params }: CallPageProps): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: CallPageProps): Promise<Metadata> {
   const { id } = await params;
   const earningCall = getEarningCallById(id);
   

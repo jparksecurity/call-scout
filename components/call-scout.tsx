@@ -17,6 +17,49 @@ import {
 } from "@/lib/types";
 import Hls from "hls.js";
 
+// --- Helper Functions (moved outside component) ---
+
+// Helper function to convert seconds to MM:SS or HH:MM:SS format
+const formatSecondsToTimestamp = (seconds: number): string => {
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, "0")}:${minutes
+      .toString()
+      .padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
+  } else {
+    return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
+      .toString()
+      .padStart(2, "0")}`;
+  }
+};
+
+// Helper function to convert timestamp string to seconds
+const convertTimestampToSeconds = (timestamp: string): number => {
+  const parts = timestamp.split(":").map(Number);
+  if (parts.length === 3) {
+    // HH:MM:SS format
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  } else if (parts.length === 2) {
+    // MM:SS format
+    return parts[0] * 60 + parts[1];
+  }
+  return 0;
+};
+
+// Helper function to check if user is near bottom of scroll area
+const isNearBottom = (container: Element, threshold = 100): boolean => {
+  return (
+    container.scrollTop + container.clientHeight >=
+    container.scrollHeight - threshold
+  );
+};
+
+// --- Component Definition ---
+
 interface CallScoutComponentProps {
   earningCall: EarningCall;
 }
@@ -47,45 +90,6 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
   // URLs from earning call data
   const audioUrl = earningCall.audioUrl;
   const transcriptUrl = earningCall.transcriptUrl;
-
-  // Helper function to convert seconds to MM:SS or HH:MM:SS format
-  const formatSecondsToTimestamp = (seconds: number): string => {
-    const totalSeconds = Math.floor(seconds);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const remainingSeconds = totalSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours.toString().padStart(2, "0")}:${minutes
-        .toString()
-        .padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
-    } else {
-      return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
-        .toString()
-        .padStart(2, "0")}`;
-    }
-  };
-
-  // Helper function to convert timestamp string to seconds
-  const convertTimestampToSeconds = (timestamp: string): number => {
-    const parts = timestamp.split(":").map(Number);
-    if (parts.length === 3) {
-      // HH:MM:SS format
-      return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    } else if (parts.length === 2) {
-      // MM:SS format
-      return parts[0] * 60 + parts[1];
-    }
-    return 0;
-  };
-
-  // Helper function to check if user is near bottom of scroll area
-  const isNearBottom = (container: Element, threshold = 100): boolean => {
-    return (
-      container.scrollTop + container.clientHeight >=
-      container.scrollHeight - threshold
-    );
-  };
 
   // Helper function to scroll to bottom
   const scrollToBottom = (smooth = true) => {
