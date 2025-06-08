@@ -3,8 +3,9 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageSquare, Clock, TrendingUp } from "lucide-react";
+import { MessageSquare, Clock, TrendingUp, ArrowDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import Hls from "hls.js";
@@ -43,11 +44,15 @@ const CallScoutComponent = () => {
   const [error, setError] = useState<string | null>(null);
   const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
   const [currentAudioTime, setCurrentAudioTime] = useState(0);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const [showScrollToLive, setShowScrollToLive] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const lastWordCountRef = useRef(0);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastScrollPositionRef = useRef(0);
 
   // URLs
   const audioUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
@@ -109,6 +114,30 @@ const CallScoutComponent = () => {
       return parts[0] * 60 + parts[1];
     }
     return 0;
+  };
+
+  // Helper function to check if user is near bottom of scroll area
+  const isNearBottom = (container: Element, threshold = 100): boolean => {
+    return container.scrollTop + container.clientHeight >= container.scrollHeight - threshold;
+  };
+
+  // Helper function to scroll to bottom
+  const scrollToBottom = (smooth = true) => {
+    if (!scrollAreaRef.current) return;
+    const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+    if (scrollContainer) {
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto'
+      });
+    }
+  };
+
+  // Handle manual scroll to live
+  const handleScrollToLive = () => {
+    setIsUserScrolling(false);
+    setShowScrollToLive(false);
+    scrollToBottom(true);
   };
 
   // Process transcript data
@@ -192,24 +221,84 @@ const CallScoutComponent = () => {
     fetchTranscript();
   }, [fetchTranscript]);
 
-  // Auto-scroll when new words appear
+  // Set up scroll event listener
+  useEffect(() => {
+    if (!scrollAreaRef.current) return;
+
+    const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+    if (!scrollContainer) return;
+
+    const handleScroll = () => {
+      const currentScrollPosition = scrollContainer.scrollTop;
+      const scrollDirection = currentScrollPosition > lastScrollPositionRef.current ? 'down' : 'up';
+      lastScrollPositionRef.current = currentScrollPosition;
+
+      // Clear any existing timeout
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+
+      // If user scrolled up, they're actively browsing
+      if (scrollDirection === 'up' && currentScrollPosition > 0) {
+        setIsUserScrolling(true);
+        setShowScrollToLive(true);
+      }
+
+      // Check if user is near bottom
+      const nearBottom = isNearBottom(scrollContainer);
+      
+      // If user scrolled back to bottom, resume auto-scroll
+      if (nearBottom) {
+        setIsUserScrolling(false);
+        setShowScrollToLive(false);
+      } else if (!nearBottom && scrollDirection === 'up') {
+        setShowScrollToLive(true);
+      }
+
+      // Set timeout to reset user scrolling state
+      scrollTimeoutRef.current = setTimeout(() => {
+        if (isNearBottom(scrollContainer)) {
+          setIsUserScrolling(false);
+          setShowScrollToLive(false);
+        }
+      }, 2000); // 2 seconds of inactivity
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+
+    return () => {
+      scrollContainer.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, [scrollAreaRef.current]);
+
+  // Smart auto-scroll when new words appear
   useEffect(() => {
     const currentWordCount = transcriptSegments.reduce((count, segment) => 
       count + segment.words.filter(word => word.startTime <= currentAudioTime).length, 0
     );
 
-    // Only scroll if new words have appeared
-    if (currentWordCount > lastWordCountRef.current && scrollAreaRef.current) {
+    // Only scroll if new words have appeared and user isn't actively scrolling
+    if (currentWordCount > lastWordCountRef.current && scrollAreaRef.current && !isUserScrolling) {
       const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      
       if (scrollContainer) {
-        scrollContainer.scrollTo({
-          top: scrollContainer.scrollHeight,
-          behavior: 'smooth'
-        });
+        // Only auto-scroll if user is near the bottom (following the live content)
+        if (isNearBottom(scrollContainer, 150)) {
+          scrollContainer.scrollTo({
+            top: scrollContainer.scrollHeight,
+            behavior: 'smooth'
+          });
+        } else {
+          // User has scrolled up, show the scroll-to-live button
+          setShowScrollToLive(true);
+        }
       }
       lastWordCountRef.current = currentWordCount;
     }
-  }, [transcriptSegments, currentAudioTime]);
+  }, [transcriptSegments, currentAudioTime, isUserScrolling]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -405,14 +494,35 @@ const CallScoutComponent = () => {
 
           {/* Transcript Section */}
           <div className="lg:col-span-2">
-            <Card className="p-6">
+            <Card className="p-6 relative">
               <div className="space-y-4">
-                                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-lg">Live Transcript</h3>
-                    <Badge variant="outline" className="text-xs">
-                      {formatSecondsToTimestamp(currentAudioTime)}
-                    </Badge>
-                  </div>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-lg">Live Transcript</h3>
+                  <Badge variant="outline" className="text-xs">
+                    {formatSecondsToTimestamp(currentAudioTime)}
+                  </Badge>
+                </div>
+
+                {/* Scroll to Live Button */}
+                <AnimatePresence>
+                  {showScrollToLive && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute top-16 right-6 z-10"
+                    >
+                      <Button
+                        onClick={handleScrollToLive}
+                        size="sm"
+                        className="shadow-lg bg-primary/90 hover:bg-primary backdrop-blur-sm"
+                      >
+                        <ArrowDown className="w-3 h-3 mr-1" />
+                        Jump to Live
+                      </Button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 <ScrollArea ref={scrollAreaRef} className="space-y-4 h-[600px] pr-2">
                   <div className="space-y-4">
