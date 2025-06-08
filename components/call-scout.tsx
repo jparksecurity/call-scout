@@ -370,10 +370,10 @@ const CallScoutComponent = () => {
                         className={cn(
                           "w-full text-left p-3 rounded-lg border",
                           annotation.type === "financial" 
-                            ? "bg-green-500/20 text-green-700 border-green-500/30" 
+                            ? "bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30" 
                             : annotation.type === "strategic"
-                            ? "bg-blue-500/20 text-blue-700 border-blue-500/30"
-                            : "bg-gray-500/20 text-gray-700 border-gray-500/30"
+                            ? "bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30"
+                            : "bg-gray-500/20 text-gray-700 dark:text-gray-300 border-gray-500/30"
                         )}
                       >
                         <div className="flex items-start space-x-2">
