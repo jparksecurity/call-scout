@@ -5,89 +5,42 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageSquare, Clock, TrendingUp, ArrowDown } from "lucide-react";
+import { MessageSquare, ArrowDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { 
+  TranscriptWord, 
+  TranscriptSegment, 
+  HlsErrorData 
+} from "@/lib/types";
 import Hls from "hls.js";
-
-interface Annotation {
-  id: string;
-  startTime: string;
-  endTime: string;
-  text: string;
-  type: "financial" | "strategic" | "general";
-}
-
-interface TranscriptWord {
-  id: string;
-  startTime: number; // in seconds
-  endTime: number; // in seconds
-  text: string;
-  paragraphId: string;
-  speakerId: string;
-}
-
-interface TranscriptSegment {
-  id: string;
-  timestamp: string;
-  words: TranscriptWord[];
-  hasAnnotation?: boolean;
-}
-
-interface HlsErrorData {
-  fatal?: boolean;
-  type?: string;
-}
 
 const CallScoutComponent = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
+  const [transcriptSegments, setTranscriptSegments] = useState<
+    TranscriptSegment[]
+  >([]);
   const [currentAudioTime, setCurrentAudioTime] = useState(0);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [showScrollToLive, setShowScrollToLive] = useState(false);
-  
+  const [processedSegments, setProcessedSegments] = useState<Set<string>>(
+    new Set()
+  ); // Track processed segments
+
   const audioRef = useRef<HTMLAudioElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const insightsScrollRef = useRef<HTMLDivElement>(null);
   const lastWordCountRef = useRef(0);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastScrollPositionRef = useRef(0);
 
   // URLs
-  const audioUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
-  const transcriptUrl = "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/live_transcript.jsonl";
-
-  const annotations: Annotation[] = [
-    {
-      id: "1",
-      startTime: "07:58",
-      endTime: "08:24",
-      text: "Elon opens with commentary on government role; interesting but not financial.",
-      type: "general"
-    },
-    {
-      id: "2", 
-      startTime: "11:29",
-      endTime: "11:37",
-      text: "Musk says he'll allocate more time to Tesla next month.",
-      type: "strategic"
-    },
-    {
-      id: "3",
-      startTime: "12:00", 
-      endTime: "15:00",
-      text: "Signals an uneven 2025 but strong long-term outlook.",
-      type: "financial"
-    },
-    {
-      id: "4",
-      startTime: "12:30",
-      endTime: "12:45", 
-      text: "Long-term bet: autonomy & humanoid robots reposition Tesla.",
-      type: "strategic"
-    }
-  ];
+  const audioUrl =
+    "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/playlists.m3u8";
+  const transcriptUrl =
+    "https://files.quartr.com/streams/2025-04-22/ec5ba86e-e8e7-4681-bea1-b1bf6085604b/1/live_transcript.jsonl";
 
   // Helper function to convert seconds to MM:SS or HH:MM:SS format
   const formatSecondsToTimestamp = (seconds: number): string => {
@@ -95,17 +48,21 @@ const CallScoutComponent = () => {
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const remainingSeconds = totalSeconds % 60;
-    
+
     if (hours > 0) {
-      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+      return `${hours.toString().padStart(2, "0")}:${minutes
+        .toString()
+        .padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
     } else {
-      return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+      return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
+        .toString()
+        .padStart(2, "0")}`;
     }
   };
 
   // Helper function to convert timestamp string to seconds
   const convertTimestampToSeconds = (timestamp: string): number => {
-    const parts = timestamp.split(':').map(Number);
+    const parts = timestamp.split(":").map(Number);
     if (parts.length === 3) {
       // HH:MM:SS format
       return parts[0] * 3600 + parts[1] * 60 + parts[2];
@@ -118,20 +75,82 @@ const CallScoutComponent = () => {
 
   // Helper function to check if user is near bottom of scroll area
   const isNearBottom = (container: Element, threshold = 100): boolean => {
-    return container.scrollTop + container.clientHeight >= container.scrollHeight - threshold;
+    return (
+      container.scrollTop + container.clientHeight >=
+      container.scrollHeight - threshold
+    );
   };
 
   // Helper function to scroll to bottom
   const scrollToBottom = (smooth = true) => {
     if (!scrollAreaRef.current) return;
-    const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+    const scrollContainer = scrollAreaRef.current.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    );
     if (scrollContainer) {
       scrollContainer.scrollTo({
         top: scrollContainer.scrollHeight,
-        behavior: smooth ? 'smooth' : 'auto'
+        behavior: smooth ? "smooth" : "auto",
       });
     }
   };
+
+  // Helper function to check if a segment is completed
+  const isSegmentCompleted = (
+    segment: TranscriptSegment,
+    currentTime: number
+  ): boolean => {
+    if (segment.words.length === 0) return false;
+
+    // Check if ALL words in the segment are visible to the user
+    const visibleWords = segment.words.filter(
+      (word) => word.startTime <= currentTime
+    );
+    const allWordsVisible = visibleWords.length === segment.words.length;
+
+    return allWordsVisible;
+  };
+
+  // Function to call insight API when segment is completed
+  const callInsightAPI = useCallback(
+    async (segment: TranscriptSegment, transcriptHistory: string) => {
+      try {
+        // Get the full segment text
+        const segmentText = segment.words.map((word) => word.text).join(" ");
+
+        const response = await fetch("/api/generate-insight", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            conversationHistory: transcriptHistory,
+            currentSentence: segmentText,
+            timestamp: segment.timestamp,
+            segmentId: segment.id,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+
+          if (data.insight) {
+            // Update the specific segment with its insight
+            setTranscriptSegments((prevSegments) =>
+              prevSegments.map((seg) =>
+                seg.id === segment.id
+                  ? { ...seg, insight: data.insight }
+                  : seg
+              )
+            );
+          }
+        }
+              } catch {
+        // Silently handle API errors in production
+      }
+    },
+    []
+  );
 
   // Handle manual scroll to live
   const handleScrollToLive = () => {
@@ -143,17 +162,22 @@ const CallScoutComponent = () => {
   // Process transcript data
   const processTranscript = useCallback((transcriptText: string) => {
     // Split by newlines and skip first metadata line
-    const lines = transcriptText.split('\n').slice(1);
+    const lines = transcriptText.split("\n").slice(1);
     const segmentsMap = new Map<string, TranscriptSegment>();
-    
+
     lines.forEach((line, index) => {
       try {
         if (!line.trim()) return; // Skip empty lines
-        
+
         const json = JSON.parse(line);
-        
+
         // Skip non-word entries
-        if (json.type || json.s === undefined || json.t === undefined || json.p === undefined) {
+        if (
+          json.type ||
+          json.s === undefined ||
+          json.t === undefined ||
+          json.p === undefined
+        ) {
           return;
         }
 
@@ -164,18 +188,17 @@ const CallScoutComponent = () => {
           endTime: json.e || json.s + 0.5,
           text: json.t,
           paragraphId: json.p,
-          speakerId: json.S || '0'
+          speakerId: json.S || "0",
         };
 
         const segmentId = `seg_${json.p}`;
-        
+
         if (!segmentsMap.has(segmentId)) {
           // Create new segment
           const newSegment: TranscriptSegment = {
             id: segmentId,
             timestamp: formatSecondsToTimestamp(json.s),
             words: [word],
-            hasAnnotation: false
           };
           segmentsMap.set(segmentId, newSegment);
         } else {
@@ -183,14 +206,17 @@ const CallScoutComponent = () => {
           const existingSegment = segmentsMap.get(segmentId)!;
           existingSegment.words.push(word);
         }
-      } catch (e) {
-        console.error('Error parsing JSON line:', e);
+      } catch {
+        // Skip malformed transcript lines
       }
     });
 
     // Convert map to array and sort by timestamp
     const segments = Array.from(segmentsMap.values()).sort((a, b) => {
-      return convertTimestampToSeconds(a.timestamp) - convertTimestampToSeconds(b.timestamp);
+      return (
+        convertTimestampToSeconds(a.timestamp) -
+        convertTimestampToSeconds(b.timestamp)
+      );
     });
 
     setTranscriptSegments(segments);
@@ -200,18 +226,16 @@ const CallScoutComponent = () => {
   const fetchTranscript = useCallback(async () => {
     try {
       const response = await fetch(transcriptUrl, {
-        cache: 'no-cache'
+        cache: "no-cache",
       });
 
       if (response.ok) {
         const transcriptText = await response.text();
         processTranscript(transcriptText);
       } else {
-        console.error('Failed to fetch transcript:', response.statusText);
         setError(`Failed to fetch transcript: ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Error fetching transcript:', error);
       setError(`Error fetching transcript: ${error}`);
     }
   }, [transcriptUrl, processTranscript]);
@@ -225,12 +249,15 @@ const CallScoutComponent = () => {
   useEffect(() => {
     if (!scrollAreaRef.current) return;
 
-    const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+    const scrollContainer = scrollAreaRef.current.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    );
     if (!scrollContainer) return;
 
     const handleScroll = () => {
       const currentScrollPosition = scrollContainer.scrollTop;
-      const scrollDirection = currentScrollPosition > lastScrollPositionRef.current ? 'down' : 'up';
+      const scrollDirection =
+        currentScrollPosition > lastScrollPositionRef.current ? "down" : "up";
       lastScrollPositionRef.current = currentScrollPosition;
 
       // Clear any existing timeout
@@ -239,19 +266,19 @@ const CallScoutComponent = () => {
       }
 
       // If user scrolled up, they're actively browsing
-      if (scrollDirection === 'up' && currentScrollPosition > 0) {
+      if (scrollDirection === "up" && currentScrollPosition > 0) {
         setIsUserScrolling(true);
         setShowScrollToLive(true);
       }
 
       // Check if user is near bottom
       const nearBottom = isNearBottom(scrollContainer);
-      
+
       // If user scrolled back to bottom, resume auto-scroll
       if (nearBottom) {
         setIsUserScrolling(false);
         setShowScrollToLive(false);
-      } else if (!nearBottom && scrollDirection === 'up') {
+      } else if (!nearBottom && scrollDirection === "up") {
         setShowScrollToLive(true);
       }
 
@@ -264,32 +291,42 @@ const CallScoutComponent = () => {
       }, 2000); // 2 seconds of inactivity
     };
 
-    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+    scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
 
     return () => {
-      scrollContainer.removeEventListener('scroll', handleScroll);
+      scrollContainer.removeEventListener("scroll", handleScroll);
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current);
       }
     };
-  }, [scrollAreaRef.current]);
+  }, []);
 
   // Smart auto-scroll when new words appear
   useEffect(() => {
-    const currentWordCount = transcriptSegments.reduce((count, segment) => 
-      count + segment.words.filter(word => word.startTime <= currentAudioTime).length, 0
+    const currentWordCount = transcriptSegments.reduce(
+      (count, segment) =>
+        count +
+        segment.words.filter((word) => word.startTime <= currentAudioTime)
+          .length,
+      0
     );
 
     // Only scroll if new words have appeared and user isn't actively scrolling
-    if (currentWordCount > lastWordCountRef.current && scrollAreaRef.current && !isUserScrolling) {
-      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      
+    if (
+      currentWordCount > lastWordCountRef.current &&
+      scrollAreaRef.current &&
+      !isUserScrolling
+    ) {
+      const scrollContainer = scrollAreaRef.current.querySelector(
+        "[data-radix-scroll-area-viewport]"
+      );
+
       if (scrollContainer) {
         // Only auto-scroll if user is near the bottom (following the live content)
         if (isNearBottom(scrollContainer, 150)) {
           scrollContainer.scrollTo({
             top: scrollContainer.scrollHeight,
-            behavior: 'smooth'
+            behavior: "smooth",
           });
         } else {
           // User has scrolled up, show the scroll-to-live button
@@ -300,6 +337,71 @@ const CallScoutComponent = () => {
     }
   }, [transcriptSegments, currentAudioTime, isUserScrolling]);
 
+  // Auto-scroll when insights are added to segments near the bottom
+  useEffect(() => {
+    if (!scrollAreaRef.current || isUserScrolling) return;
+
+    const scrollContainer = scrollAreaRef.current.querySelector(
+      "[data-radix-scroll-area-viewport]"
+    );
+
+    if (scrollContainer && isNearBottom(scrollContainer, 150)) {
+      // Small delay to ensure the insight is fully rendered
+      setTimeout(() => {
+        scrollContainer.scrollTo({
+          top: scrollContainer.scrollHeight,
+          behavior: "smooth",
+        });
+      }, 100);
+    }
+  }, [transcriptSegments, isUserScrolling]);
+
+  // Auto-scroll insights sidebar to latest insight
+  useEffect(() => {
+    if (!insightsScrollRef.current) return;
+
+    // Small delay to ensure the insight is fully rendered
+    const timer = setTimeout(() => {
+      insightsScrollRef.current?.scrollTo({
+        top: insightsScrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [transcriptSegments]);
+
+  // Segment completion detection: Call API when segments are completed
+  useEffect(() => {
+    // Find completed segments that haven't been processed yet
+    const completedSegments = transcriptSegments.filter((segment) => {
+      const isCompleted = isSegmentCompleted(segment, currentAudioTime);
+      const notProcessed = !processedSegments.has(segment.id);
+      return isCompleted && notProcessed && segment.words.length > 0;
+    });
+
+    completedSegments.forEach((segment) => {
+      // Mark as processed immediately to avoid duplicate calls
+      setProcessedSegments((prev) => new Set([...prev, segment.id]));
+
+      // Build conversation history (everything before this segment)
+      const segmentIndex = transcriptSegments.findIndex(
+        (s) => s.id === segment.id
+      );
+      const transcriptHistory = transcriptSegments
+        .slice(0, segmentIndex)
+        .map((seg) => seg.words.map((word) => word.text).join(" "))
+        .join(" ");
+
+      callInsightAPI(segment, transcriptHistory);
+    });
+  }, [
+    transcriptSegments,
+    currentAudioTime,
+    processedSegments,
+    callInsightAPI,
+  ]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -309,20 +411,18 @@ const CallScoutComponent = () => {
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          backBufferLength: 90
+          backBufferLength: 90,
         });
         hlsRef.current = hls;
-        
+
         hls.loadSource(audioUrl);
         hls.attachMedia(audio);
-        
+
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoading(false);
-          console.log("HLS manifest loaded successfully");
         });
-        
+
         hls.on(Hls.Events.ERROR, (_event: string, data: HlsErrorData) => {
-          console.error("HLS error:", data);
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
@@ -338,15 +438,9 @@ const CallScoutComponent = () => {
                 setIsLoading(false);
                 break;
             }
-          } else {
-            console.warn("Non-fatal HLS error:", data);
           }
         });
-
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-          console.log("HLS media attached");
-        });
-      } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+      } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
         // Fallback for Safari
         audio.src = audioUrl;
         audio.crossOrigin = "anonymous";
@@ -370,14 +464,14 @@ const CallScoutComponent = () => {
         setCurrentAudioTime(audio.currentTime);
       };
 
-      audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.addEventListener('error', handleError);
-      audio.addEventListener('timeupdate', handleTimeUpdate);
+      audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.addEventListener("error", handleError);
+      audio.addEventListener("timeupdate", handleTimeUpdate);
 
       return () => {
-        audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        audio.removeEventListener('error', handleError);
-        audio.removeEventListener('timeupdate', handleTimeUpdate);
+        audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        audio.removeEventListener("error", handleError);
+        audio.removeEventListener("timeupdate", handleTimeUpdate);
       };
     };
 
@@ -400,10 +494,14 @@ const CallScoutComponent = () => {
             <div>
               <h1 className="text-2xl font-bold tracking-tight">CallScout</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Live Earnings Call Insight — Real-time annotated transcript analysis
+                Live Earnings Call Insight — Real-time annotated transcript
+                analysis
               </p>
             </div>
-            <Badge variant="outline" className="bg-green-500/10 text-green-400 border-green-500/30">
+            <Badge
+              variant="outline"
+              className="bg-green-500/10 text-green-400 border-green-500/30"
+            >
               <div className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
               Live
             </Badge>
@@ -418,17 +516,23 @@ const CallScoutComponent = () => {
             <Card className="p-6 sticky top-6">
               <div className="space-y-4">
                 <div className="text-center">
-                  <h3 className="font-semibold text-lg">Tesla Q1 2025 Earnings Call</h3>
-                  <p className="text-sm text-muted-foreground">April 22, 2025</p>
-                  
+                  <h3 className="font-semibold text-lg">
+                    Tesla Q1 2025 Earnings Call
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    April 22, 2025
+                  </p>
+
                   {/* Loading/Error States */}
                   {isLoading && (
                     <div className="flex items-center justify-center space-x-2 mt-2">
                       <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                      <span className="text-xs text-muted-foreground">Loading audio...</span>
+                      <span className="text-xs text-muted-foreground">
+                        Loading audio...
+                      </span>
                     </div>
                   )}
-                  
+
                   {error && (
                     <div className="mt-2 p-2 bg-destructive/10 text-destructive text-xs rounded-md">
                       {error}
@@ -443,49 +547,62 @@ const CallScoutComponent = () => {
                     controls
                     preload="metadata"
                     className="w-full"
-                    style={{ maxWidth: '100%' }}
+                    style={{ maxWidth: "100%" }}
                   >
                     Your browser does not support the audio element.
                   </audio>
                 </div>
 
-                {/* Annotations Summary */}
+                {/* Insights Summary */}
                 <div className="space-y-3 pt-4 border-t border-border">
-                  <h4 className="font-medium text-sm">Key Annotations</h4>
-                  <div className="space-y-2">
-                    {annotations.map((annotation) => (
-                      <div
-                        key={annotation.id}
-                        className={cn(
-                          "w-full text-left p-3 rounded-lg border",
-                          annotation.type === "financial" 
-                            ? "bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/30" 
-                            : annotation.type === "strategic"
-                            ? "bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30"
-                            : "bg-gray-500/20 text-gray-700 dark:text-gray-300 border-gray-500/30"
-                        )}
-                      >
-                        <div className="flex items-start space-x-2">
-                          <div className="flex-shrink-0 mt-1">
-                            {annotation.type === "financial" ? (
-                              <TrendingUp className="w-3 h-3" />
-                            ) : annotation.type === "strategic" ? (
-                              <MessageSquare className="w-3 h-3" />
-                            ) : (
-                              <Clock className="w-3 h-3" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-medium mb-1">
-                              {annotation.startTime} - {annotation.endTime}
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-sm">Key Insights</h4>
+                    <Badge variant="outline" className="text-xs">
+                      {
+                        transcriptSegments.filter((seg) => seg.insight)
+                          .length
+                      }{" "}
+                      total
+                    </Badge>
+                  </div>
+                  <div 
+                    ref={insightsScrollRef}
+                    className="space-y-2 max-h-96 overflow-y-auto"
+                  >
+                    {/* Dynamic insights */}
+                    {transcriptSegments.map((segment) => {
+                      if (segment.insight) {
+                        return (
+                          <div
+                            key={segment.id}
+                            className="w-full text-left p-3 rounded-lg border bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/30"
+                          >
+                            <div className="flex items-start space-x-2">
+                              <div className="flex-shrink-0 mt-1">
+                                <MessageSquare className="w-3 h-3" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium mb-1">
+                                  {segment.timestamp}
+                                </div>
+                                <div className="text-xs">
+                                  {segment.insight.text}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-xs">
-                              {annotation.text}
-                            </div>
                           </div>
-                        </div>
+                        );
+                      }
+                      return null;
+                    })}
+
+                    {/* Show message if no insights yet */}
+                    {transcriptSegments.filter((seg) => seg.insight)
+                      .length === 0 && (
+                      <div className="text-xs text-muted-foreground text-center py-4">
+                        Insights will appear here as the call progresses...
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               </div>
@@ -524,19 +641,30 @@ const CallScoutComponent = () => {
                   )}
                 </AnimatePresence>
 
-                <ScrollArea ref={scrollAreaRef} className="space-y-4 h-[600px] pr-2">
+                <ScrollArea
+                  ref={scrollAreaRef}
+                  className="space-y-4 h-[600px] pr-2"
+                >
                   <div className="space-y-4">
                     <AnimatePresence>
                       {transcriptSegments
-                        .filter(segment => segment.words.some(word => word.startTime <= currentAudioTime))
-                        .map((segment, index, filteredSegments) => {
+                        .filter((segment) =>
+                          segment.words.some(
+                            (word) => word.startTime <= currentAudioTime
+                          )
+                        )
+                        .map((segment) => {
                           // Find the last visible word in this segment
-                          const visibleWords = segment.words.filter(word => word.startTime <= currentAudioTime);
-                          const lastVisibleWord = visibleWords[visibleWords.length - 1];
-                          const isCurrentSegment = lastVisibleWord && 
-                            currentAudioTime >= lastVisibleWord.startTime && 
-                            currentAudioTime <= lastVisibleWord.endTime + 2; // 2 second buffer
-                          
+                          const visibleWords = segment.words.filter(
+                            (word) => word.startTime <= currentAudioTime
+                          );
+                          const lastVisibleWord =
+                            visibleWords[visibleWords.length - 1];
+                                                     const isCurrentSegment =
+                             lastVisibleWord &&
+                             currentAudioTime >= lastVisibleWord.startTime &&
+                             currentAudioTime <= lastVisibleWord.endTime;
+
                           return (
                             <motion.div
                               key={segment.id}
@@ -544,19 +672,23 @@ const CallScoutComponent = () => {
                               animate={{ opacity: 1, y: 0 }}
                               className={cn(
                                 "p-4 rounded-lg border transition-all duration-300",
-                                isCurrentSegment 
-                                  ? "bg-primary/10 border-primary/30 shadow-md" 
+                                isCurrentSegment
+                                  ? "bg-primary/10 border-primary/30 shadow-md"
                                   : "bg-muted/50 border-border hover:bg-muted/80",
-                                segment.hasAnnotation && "border-l-4 border-l-primary"
+                                segment.insight &&
+                                  "border-l-4 border-l-primary"
                               )}
                             >
                               <div className="flex items-start space-x-3">
                                 <div className="flex-shrink-0">
-                                  <Badge 
-                                    variant={isCurrentSegment ? "default" : "outline"} 
+                                  <Badge
+                                    variant={
+                                      isCurrentSegment ? "default" : "outline"
+                                    }
                                     className={cn(
                                       "text-xs",
-                                      isCurrentSegment && "bg-primary text-primary-foreground"
+                                      isCurrentSegment &&
+                                        "bg-primary text-primary-foreground"
                                     )}
                                   >
                                     {segment.timestamp}
@@ -567,36 +699,69 @@ const CallScoutComponent = () => {
                                     {isCurrentSegment && (
                                       <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
                                     )}
-                                    {segment.hasAnnotation && (
-                                      <MessageSquare className="w-3 h-3 text-primary" />
-                                    )}
                                   </div>
-                                  <p className={cn(
-                                    "text-sm leading-relaxed",
-                                    isCurrentSegment && "font-medium"
-                                  )}>
+                                  <p
+                                    className={cn(
+                                      "text-sm leading-relaxed",
+                                      isCurrentSegment && "text-primary"
+                                    )}
+                                  >
                                     {segment.words
-                                      .filter(word => word.startTime <= currentAudioTime)
-                                      .map(word => {
-                                        const isCurrentWord = currentAudioTime >= word.startTime && 
-                                                            currentAudioTime <= word.endTime;
-                                        
+                                      .filter(
+                                        (word) =>
+                                          word.startTime <= currentAudioTime
+                                      )
+                                      .map((word) => {
+                                        const isCurrentWord =
+                                          currentAudioTime >= word.startTime &&
+                                          currentAudioTime <= word.endTime;
+
                                         return (
-                                          <motion.span
+                                          <span
                                             key={word.id}
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            transition={{ duration: 0.15, ease: "easeOut" }}
                                             className={cn(
-                                              "inline-block px-1 rounded transition-colors duration-150",
-                                              isCurrentWord && "font-medium bg-primary/15"
+                                              "transition-colors duration-150",
+                                              isCurrentWord &&
+                                                "bg-primary/15 text-primary px-1 rounded"
                                             )}
                                           >
-                                            {word.text}{' '}
-                                          </motion.span>
+                                            {word.text}{" "}
+                                          </span>
                                         );
                                       })}
                                   </p>
+
+                                  {/* Insight Display */}
+                                  {segment.insight && (
+                                    <motion.div
+                                      initial={{
+                                        opacity: 0,
+                                        y: 10,
+                                        scale: 0.95,
+                                      }}
+                                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                                      transition={{
+                                        duration: 0.3,
+                                        ease: "easeOut",
+                                      }}
+                                      className="mt-4 p-4 rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 shadow-sm dark:border-blue-800 dark:from-blue-950/50 dark:to-indigo-950/50"
+                                    >
+                                      <div className="flex items-center space-x-2 mb-2">
+                                        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900">
+                                          <MessageSquare className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                        </div>
+                                        <Badge
+                                          variant="secondary"
+                                          className="bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800 font-medium"
+                                        >
+                                          ✨ AI Insight
+                                        </Badge>
+                                      </div>
+                                      <p className="text-sm text-blue-800 dark:text-blue-200 leading-relaxed font-medium">
+                                        {segment.insight.text}
+                                      </p>
+                                    </motion.div>
+                                  )}
                                 </div>
                               </div>
                             </motion.div>
@@ -614,4 +779,4 @@ const CallScoutComponent = () => {
   );
 };
 
-export default CallScoutComponent; 
+export default CallScoutComponent;

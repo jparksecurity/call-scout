@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "CallScout - Live Earnings Call Insight",
-  description: "Real-time annotated transcript analysis for earnings calls",
+  description: "Real-time insight transcript analysis for earnings calls with AI-powered insights.",
 };
 
 export default function RootLayout({
