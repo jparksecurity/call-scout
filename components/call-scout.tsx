@@ -34,6 +34,7 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
   const [processedSegments, setProcessedSegments] = useState<Set<string>>(
     new Set()
   ); // Track processed segments
+  const [ariaLiveMessage, setAriaLiveMessage] = useState("");
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -381,6 +382,17 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
     return () => clearTimeout(timer);
   }, [transcriptSegments]);
 
+  // Announce new insights for screen readers
+  useEffect(() => {
+    const latestInsightSegment = transcriptSegments
+      .filter(seg => seg.insight)
+      .sort((a, b) => convertTimestampToSeconds(b.timestamp) - convertTimestampToSeconds(a.timestamp))[0];
+    
+    if (latestInsightSegment && latestInsightSegment.insight) {
+      setAriaLiveMessage(`New insight at ${latestInsightSegment.timestamp}: ${latestInsightSegment.insight.text}`);
+    }
+  }, [transcriptSegments]);
+
   // Segment completion detection: Call API when segments are completed
   useEffect(() => {
     // Find completed segments that haven't been processed yet
@@ -595,6 +607,7 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
                   <div 
                     ref={insightsScrollRef}
                     className="space-y-2 max-h-96 overflow-y-auto"
+                    aria-live="polite"
                   >
                     {/* Dynamic insights */}
                     {transcriptSegments.map((segment) => {
@@ -705,6 +718,8 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
                                 segment.insight &&
                                   "border-l-4 border-l-primary"
                               )}
+                              role="article"
+                              aria-labelledby={`segment-time-${segment.id}`}
                             >
                               <div className="flex items-start space-x-3">
                                 <div className="flex-shrink-0">
@@ -717,6 +732,7 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
                                       isCurrentSegment &&
                                         "bg-primary text-primary-foreground"
                                     )}
+                                    id={`segment-time-${segment.id}`}
                                   >
                                     {segment.timestamp}
                                   </Badge>
@@ -801,6 +817,9 @@ const CallScoutComponent: React.FC<CallScoutComponentProps> = ({ earningCall }) 
             </Card>
           </div>
         </div>
+      </div>
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {ariaLiveMessage}
       </div>
     </div>
   );
